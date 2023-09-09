@@ -29,6 +29,17 @@ struct Shading{
 template<> struct ImGuiLabel<Shading::Flat>{ static constexpr const char *value = "Flat shading"; };
 template<> struct ImGuiLabel<Shading::Phong>{ static constexpr const char *value = "Phong shading"; };
 
+struct MvpMatrixUniform{
+    glm::mat4 model;
+    glm::mat4 inv_model;
+    glm::mat4 projection_view;
+};
+
+struct LightingUniform{
+    alignas(16) glm::vec3 view_pos;  // base alignment must be 16 for vec3.
+    alignas(16) glm::vec3 light_pos; // base alignment must be 16 for vec3.
+};
+
 class Viewer final : public OpenGL::Window {
 private:
     DirtyProperty<int> subdivision_level = 0;
@@ -44,8 +55,15 @@ private:
     OpenGL::Camera camera;
 
     OpenGL::Program flat_program, phong_program;
-    glm::mat4 view, projection;
-    GLuint vao, vbo, ebo;
+    MvpMatrixUniform mvp_matrix;
+    LightingUniform lighting;
+
+    GLuint vao;
+    std::array<GLuint, 4> buffer_objects;
+    GLuint &vbo            = buffer_objects[0],
+           &ebo            = buffer_objects[1],
+           &mvp_matrix_ubo = buffer_objects[2],
+           &lighting_ubo   = buffer_objects[3];
 
     void onFramebufferSizeChanged(int width, int height) override {
         OpenGL::Window::onFramebufferSizeChanged(width, height);
@@ -184,13 +202,14 @@ private:
 
         if (fix_light_position.is_dirty) {
             if (fix_light_position.value){
-                flat_program.setUniform("light_pos", glm::vec3(5.f, 0.f, 0.f));
-                phong_program.setUniform("light_pos", glm::vec3(5.f, 0.f, 0.f));
+                lighting.light_pos = glm::vec3(5.f, 0.f, 0.f);
             }
             else{
-                flat_program.setUniform("light_pos", camera.getPosition());
-                phong_program.setUniform("light_pos", camera.getPosition());
+                lighting.light_pos = camera.getPosition();
             }
+
+            glBindBuffer(GL_UNIFORM_BUFFER, lighting_ubo);
+            glBufferData(GL_UNIFORM_BUFFER, sizeof(LightingUniform), &lighting, GL_DYNAMIC_DRAW);
         }
 
         updateImGui(time_delta);
@@ -218,12 +237,13 @@ private:
     }
 
     void onCameraChanged(){
-        view = camera.getView();
-        projection = camera.getProjection(getAspectRatio());
-        flat_program.setUniform("view_pos", camera.getPosition());
-        flat_program.setUniform("projection_view", projection * view);
-        phong_program.setUniform("view_pos", camera.getPosition());
-        phong_program.setUniform("projection_view", projection * view);
+        mvp_matrix.projection_view = camera.getProjection(getAspectRatio()) * camera.getView();
+        glBindBuffer(GL_UNIFORM_BUFFER, mvp_matrix_ubo);
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(MvpMatrixUniform), &mvp_matrix, GL_DYNAMIC_DRAW);
+
+        lighting.view_pos = camera.getPosition();
+        glBindBuffer(GL_UNIFORM_BUFFER, lighting_ubo);
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(LightingUniform), &lighting, GL_DYNAMIC_DRAW);
     }
 
     void initImGui() {
@@ -305,19 +325,36 @@ public:
     {
         camera.distance = 5.f;
         camera.addYaw(glm::radians(180.f));
-        view = camera.getView();
-        projection = camera.getProjection(getAspectRatio());
 
-        flat_program.setUniform("view_pos", camera.getPosition());
-        flat_program.setUniform("light_pos", camera.getPosition());
-        flat_program.setUniform("projection_view", projection * view);
-        phong_program.setUniform("view_pos", camera.getPosition());
-        phong_program.setUniform("light_pos", camera.getPosition());
-        phong_program.setUniform("projection_view", projection * view);
+        mvp_matrix.model = glm::identity<glm::mat4>();
+        mvp_matrix.inv_model = glm::inverse(mvp_matrix.model);
+        mvp_matrix.projection_view = camera.getProjection(getAspectRatio()) * camera.getView();
+
+        lighting.view_pos = camera.getPosition();
 
         glGenVertexArrays(1, &vao);
-        glGenBuffers(1, &vbo);
-        glGenBuffers(1, &ebo);
+        glGenBuffers(static_cast<GLsizei>(buffer_objects.size()), buffer_objects.data());
+
+        // Set uniform buffers.
+        glBindBuffer(GL_UNIFORM_BUFFER, mvp_matrix_ubo);
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(MvpMatrixUniform), &mvp_matrix, GL_DYNAMIC_DRAW);
+
+        const GLuint flat_program_mvp_matrix_index = glGetUniformBlockIndex(flat_program.handle, "MvpMatrix");
+        glUniformBlockBinding(flat_program.handle, flat_program_mvp_matrix_index, 0);
+        const GLuint phong_program_mvp_matrix_index = glGetUniformBlockIndex(phong_program.handle, "MvpMatrix");
+        glUniformBlockBinding(phong_program.handle, phong_program_mvp_matrix_index, 0);
+
+        glBindBufferBase(GL_UNIFORM_BUFFER, 0, mvp_matrix_ubo);
+
+        glBindBuffer(GL_UNIFORM_BUFFER, lighting_ubo);
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(LightingUniform), nullptr /* will be updated later */, GL_DYNAMIC_DRAW);
+
+        const GLuint flat_program_lighting_index = glGetUniformBlockIndex(flat_program.handle, "Lighting");
+        glUniformBlockBinding(flat_program.handle, flat_program_lighting_index, 1);
+        const GLuint phong_program_lighting_index = glGetUniformBlockIndex(phong_program.handle, "Lighting");
+        glUniformBlockBinding(phong_program.handle, phong_program_lighting_index, 1);
+
+        glBindBufferBase(GL_UNIFORM_BUFFER, 1, lighting_ubo);
 
         // Front face of triangles are counter-clockwise.
         glEnable(GL_CULL_FACE);
@@ -329,8 +366,7 @@ public:
 
     ~Viewer() noexcept override{
         glDeleteVertexArrays(1, &vao);
-        glDeleteBuffers(1, &vbo);
-        glDeleteBuffers(1, &ebo);
+        glDeleteBuffers(static_cast<GLsizei>(buffer_objects.size()), buffer_objects.data());
 
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();

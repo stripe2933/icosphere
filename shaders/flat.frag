@@ -22,8 +22,10 @@ in vec3 normal;
 
 out vec4 FragColor;
 
-uniform vec3 view_pos;
-uniform vec3 light_pos;
+layout (std140) uniform Lighting{
+    vec3 view_pos;
+    vec3 light_pos;
+};
 
 const Material material = Material(
     vec3(0.2, 0.5, 1.0),
