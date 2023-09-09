@@ -189,6 +189,8 @@ private:
 
                     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), nullptr);
                     glEnableVertexAttribArray(0);
+                    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), nullptr);
+                    glEnableVertexAttribArray(1); // for sphere, all vertex position is also normal.
 
                     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
                     glBufferData(GL_ELEMENT_ARRAY_BUFFER,

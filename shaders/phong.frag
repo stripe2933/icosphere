@@ -18,6 +18,7 @@ struct PointLight {
 };
 
 in vec3 fragPos;
+in vec3 normal;
 
 out vec4 FragColor;
 
@@ -42,8 +43,6 @@ const PointLight light = PointLight(
 );
 
 void main(){
-    vec3 normal = fragPos;
-
     // ambient
     vec3 ambient = light.ambient * material.ambient;
 
