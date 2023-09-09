@@ -49,7 +49,7 @@ template <typename IndexType>
 class Icosphere{
 private:
     using mesh_t = Mesh<IndexType>;
-    using triangle_index_t = mesh_t::triangle_index_t;
+    using triangle_index_t = typename mesh_t::triangle_index_t;
 
     struct pair_hash{
         constexpr std::size_t operator()(std::pair<IndexType, IndexType> pair) const noexcept{
@@ -57,7 +57,7 @@ private:
             // https://stackoverflow.com/questions/35985960/c-why-is-boosthash-combine-the-best-way-to-combine-hash-values
 
             std::size_t seed = std::hash<IndexType>{}(pair.first);
-            seed ^= std::hash<IndexType>{}(pair.second) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+            seed ^= std::hash<IndexType>{}(pair.second) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
             return seed;
         }
     };
@@ -114,27 +114,29 @@ public:
         const auto [previous_positions, previous_triangle_indices] = generate(level - 1);
 
         /*
-         * 새로 생성되는 위치는 기존 삼각형의 세 변의 중점이며, 따라서 삼각형 당 3개의 새 좌표가 생성된다. 그러나, 이웃한 두 삼각형 면이 공유하는
-         * 변의 중점이 두 번 계산되므로 최종적으로 생성되는 좌표의 개수는 (기존 삼각형 개수) * 3 / 2이다. 총 좌표의 개수는
-         *     (기존 삼각형 개수) * 3 / 2 + (기존 좌표 개수)
-         * 이다.
+         * The newly generated positions are the midpoints of the three sides of the existing triangle, and therefore,
+         * three new coordinates are created for each triangle. However, since the midpoint of a side shared by two
+         * neighboring triangles is calculated twice, the final number of generated coordinates is (the number of
+         * existing triangles) * 3 / 2. The total number of coordinates is then
+         *     (the number of existing triangles) * 3 / 2 + (the number of existing coordinates).
          */
         typename mesh_t::positions_t new_positions { std::move(previous_positions) };
         new_positions.reserve(new_positions.size() + previous_triangle_indices.size() * 3 / 2);
 
         /*
-         * 기존 삼각형이 4개의 새로운 삼각형으로 나누어지므로 최종적으로 생성되는 삼각형의 개수는
-         *     (기존 삼각형 개수) * 4
-         * 이다.
+         * Since each existing triangle is divided into 4 new triangles, the final number of generated triangles is
+         * indeed (the number of existing triangles) * 4.
          */
         typename mesh_t::triangle_indices_t new_triangle_indices;
         new_triangle_indices.reserve(previous_triangle_indices.size() * 4);
 
         /*
-         * 기존 삼각형의 세 꼭짓점과, 각 변의 중점을 new_positions에 삽입한다. 중점은 차후 인접한 삼각형에서 다시 사용되므로 (최대 1번)
-         * edge_midpoints에 해당 중점이 포함된 변의 정렬된 양 끝점 인덱스 쌍을 키, new_positions 내 중점의 인덱스를 값으로 하여 삽입한다. 이후
-         * 다음 사용 시 중점을 edge_midpoints에서 불러와 사용하고, 이후 해당 중점은 다시 탐색되지 않으므로 (중점은 오직 두 개의 삼각형에서만
-         * 사용되므로) edge_midpoints에서 삭제한다.
+         * The three vertices of the existing triangle and the midpoints of each side are inserted into the new_positions
+         * list. Since midpoints will be used again in neighboring triangles (at most once), they are inserted into the
+         * edge_midpoints with keys representing pairs of sorted indices for the endpoints of the side that contains the
+         * midpoint, and the values being the index of the midpoint in new_positions.
+         * When needed later, you can retrieve the midpoint from edge_midpoints and use it. Afterward, you can remove
+         * the midpoint from edge_midpoints since midpoints are only used in two triangles.
          */
         std::unordered_map<std::pair<IndexType, IndexType>, IndexType, pair_hash> edge_midpoints;
         const auto process_midpoint = [&](IndexType idx1, IndexType idx2) -> IndexType /* midpoint index */ {
