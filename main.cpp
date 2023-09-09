@@ -129,13 +129,13 @@ private:
                 [&](Shading::Flat &flat_shading){
                     const auto start = std::chrono::high_resolution_clock::now();
 
-                    const Mesh<unsigned int> new_icosphere = Icosphere<unsigned int>::generate(subdivision_level.value);
-                    const std::vector<Triangle> triangles = new_icosphere.getTriangles();
+                    const auto triangles = Icosphere<unsigned int>::generate(subdivision_level.value) /* new icosphere */
+                        .getTriangles();
 
                     std::vector<Vertex> vertices;
                     vertices.reserve(3 * triangles.size());
 
-                    for (const auto &triangle : triangles){
+                    for (const Triangle &triangle : triangles){
                         const glm::vec3 normal = triangle.normal();
                         vertices.emplace_back(triangle.p1, normal);
                         vertices.emplace_back(triangle.p2, normal);
@@ -274,7 +274,8 @@ private:
         ImGui::Text("FPS: %d", static_cast<int>(ImGui::GetIO().Framerate));
 
         if (bool fix_light_position_input = fix_light_position.value;
-            ImGui::Checkbox("Fix light position", &fix_light_position_input)){
+            ImGui::Checkbox("Fix light position", &fix_light_position_input))
+        {
             if (fix_light_position_input != fix_light_position.value){
                 fix_light_position.value = fix_light_position_input;
                 fix_light_position.is_dirty = true;
@@ -328,35 +329,45 @@ public:
         camera.distance = 5.f;
         camera.addYaw(glm::radians(180.f));
 
-        mvp_matrix.model = glm::identity<glm::mat4>();
+        // Set MVP matrix.
+        mvp_matrix.model = glm::identity<glm::mat4>(); // You can use your own transform matrix here.
         mvp_matrix.inv_model = glm::inverse(mvp_matrix.model);
         mvp_matrix.projection_view = camera.getProjection(getAspectRatio()) * camera.getView();
 
+        // Set lighting properties.
         lighting.view_pos = camera.getPosition();
 
+        // VAO for icosphere.
         glGenVertexArrays(1, &vao);
         glGenBuffers(static_cast<GLsizei>(buffer_objects.size()), buffer_objects.data());
 
-        // Set uniform buffers.
-        glBindBuffer(GL_UNIFORM_BUFFER, mvp_matrix_ubo);
-        glBufferData(GL_UNIFORM_BUFFER, sizeof(MvpMatrixUniform), &mvp_matrix, GL_DYNAMIC_DRAW);
+        // Set uniform buffer objects.
+        // MVP matrix UBO.
+        {
+            glBindBuffer(GL_UNIFORM_BUFFER, mvp_matrix_ubo);
+            glBufferData(GL_UNIFORM_BUFFER, sizeof(MvpMatrixUniform), &mvp_matrix, GL_DYNAMIC_DRAW);
 
-        const GLuint flat_program_mvp_matrix_index = glGetUniformBlockIndex(flat_program.handle, "MvpMatrix");
-        glUniformBlockBinding(flat_program.handle, flat_program_mvp_matrix_index, 0);
-        const GLuint phong_program_mvp_matrix_index = glGetUniformBlockIndex(phong_program.handle, "MvpMatrix");
-        glUniformBlockBinding(phong_program.handle, phong_program_mvp_matrix_index, 0);
+            const GLuint flat_program_mvp_matrix_index = glGetUniformBlockIndex(flat_program.handle, "MvpMatrix");
+            glUniformBlockBinding(flat_program.handle, flat_program_mvp_matrix_index, 0);
+            const GLuint phong_program_mvp_matrix_index = glGetUniformBlockIndex(phong_program.handle, "MvpMatrix");
+            glUniformBlockBinding(phong_program.handle, phong_program_mvp_matrix_index, 0);
 
-        glBindBufferBase(GL_UNIFORM_BUFFER, 0, mvp_matrix_ubo);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 0, mvp_matrix_ubo);
+        }
 
-        glBindBuffer(GL_UNIFORM_BUFFER, lighting_ubo);
-        glBufferData(GL_UNIFORM_BUFFER, sizeof(LightingUniform), nullptr /* will be updated later */, GL_DYNAMIC_DRAW);
+        // Lighting UBO.
+        {
+            glBindBuffer(GL_UNIFORM_BUFFER, lighting_ubo);
+            glBufferData(GL_UNIFORM_BUFFER, sizeof(LightingUniform), nullptr /* will be updated later */,
+                         GL_DYNAMIC_DRAW);
 
-        const GLuint flat_program_lighting_index = glGetUniformBlockIndex(flat_program.handle, "Lighting");
-        glUniformBlockBinding(flat_program.handle, flat_program_lighting_index, 1);
-        const GLuint phong_program_lighting_index = glGetUniformBlockIndex(phong_program.handle, "Lighting");
-        glUniformBlockBinding(phong_program.handle, phong_program_lighting_index, 1);
+            const GLuint flat_program_lighting_index = glGetUniformBlockIndex(flat_program.handle, "Lighting");
+            glUniformBlockBinding(flat_program.handle, flat_program_lighting_index, 1);
+            const GLuint phong_program_lighting_index = glGetUniformBlockIndex(phong_program.handle, "Lighting");
+            glUniformBlockBinding(phong_program.handle, phong_program_lighting_index, 1);
 
-        glBindBufferBase(GL_UNIFORM_BUFFER, 1, lighting_ubo);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 1, lighting_ubo);
+        }
 
         // Front face of triangles are counter-clockwise.
         glEnable(GL_CULL_FACE);
