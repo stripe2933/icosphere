@@ -1,0 +1,19 @@
+{
+  "name" : "icosphere",
+  "version-string" : "1.0.0",
+  "builtin-baseline" : "436a061a544c124200200517b9ee55c5bb1b7a26",
+  "dependencies" : [ {
+    "name" : "glm",
+    "version>=" : "2023-06-08"
+  }, {
+    "name" : "glew",
+    "version>=" : "2.2.0#3"
+  }, {
+    "name" : "glfw3",
+    "version>=" : "3.3.8#2"
+  }, {
+    "name" : "imgui",
+    "version>=" : "1.89.7",
+    "features" : [ "glfw-binding", "opengl3-binding" ]
+  } ]
+}

@@ -1,0 +1,343 @@
+#include <OpenGLApp/Window.hpp>
+#include <OpenGLApp/Program.hpp>
+#include <OpenGLApp/Camera.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_opengl3.h>
+
+#include <imgui_variant_selector.hpp>
+#include <dirty_property.hpp>
+#include <visitor_helper.hpp>
+
+#include "icosphere.hpp"
+#include "vertex.hpp"
+
+struct Shading{
+    struct Flat {
+        GLsizei num_icosphere_vertices = 0;
+    };
+
+    struct Phong {
+        std::size_t num_icosphere_positions = 0;
+        GLsizei num_icosphere_indices = 0;
+    };
+
+    using Type = std::variant<Flat, Phong>;
+};
+
+template<> struct ImGuiLabel<Shading::Flat>{ static constexpr const char *value = "Flat shading"; };
+template<> struct ImGuiLabel<Shading::Phong>{ static constexpr const char *value = "Phong shading"; };
+
+class Viewer final : public OpenGL::Window {
+private:
+    DirtyProperty<int> subdivision_level = 0;
+    DirtyProperty<Shading::Type> shading = Shading::Phong{};
+    DirtyProperty<bool> fix_light_position = false; // true -> light is fixed at (5, 0, 0), false -> light is at camera position.
+    float generation_elapsed = 0.f;
+
+    std::optional<glm::vec2> previous_mouse_position;
+    const struct{
+        float scroll_sensitivity = 0.1f;
+        float pan_sensitivity = 3e-3f;
+    } input;
+    OpenGL::Camera camera;
+
+    OpenGL::Program flat_program, phong_program;
+    glm::mat4 view, projection;
+    GLuint vao, vbo, ebo;
+
+    void onFramebufferSizeChanged(int width, int height) override {
+        OpenGL::Window::onFramebufferSizeChanged(width, height);
+        onCameraChanged();
+    }
+
+    void onScrollChanged(double xoffset, double yoffset) override {
+        ImGuiIO &io = ImGui::GetIO();
+        io.AddMouseWheelEvent(static_cast<float>(xoffset), static_cast<float>(yoffset));
+        if (io.WantCaptureMouse) {
+            return;
+        }
+
+        camera.distance = std::fmax(
+            std::exp(input.scroll_sensitivity * static_cast<float>(-yoffset)) * camera.distance,
+            camera.min_distance
+        );
+        onCameraChanged();
+    }
+
+    void onMouseButtonChanged(int button, int action, int mods) override {
+        ImGuiIO &io = ImGui::GetIO();
+        io.AddMouseButtonEvent(button, action);
+        if (io.WantCaptureMouse) {
+            return;
+        }
+
+        if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS){
+            double mouse_x, mouse_y;
+            glfwGetCursorPos(window, &mouse_x, &mouse_y);
+
+            previous_mouse_position = glm::vec2(mouse_x, mouse_y);
+        }
+        else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE){
+            previous_mouse_position = std::nullopt;
+        }
+        onCameraChanged();
+    }
+
+    void onCursorPosChanged(double xpos, double ypos) override {
+        const glm::vec2 position { xpos, ypos };
+
+        ImGuiIO &io = ImGui::GetIO();
+        io.AddMousePosEvent(position.x, position.y);
+        if (io.WantCaptureMouse) {
+            return;
+        }
+
+        if (previous_mouse_position.has_value()) {
+            const glm::vec2 offset = input.pan_sensitivity * (position - previous_mouse_position.value());
+            previous_mouse_position = position;
+
+            camera.addYaw(offset.x);
+            camera.addPitch(-offset.y);
+
+            onCameraChanged();
+        }
+    }
+
+    void update(float time_delta) override {
+        if (subdivision_level.is_dirty || shading.is_dirty){
+            std::visit(overload {
+                [&](Shading::Flat &flat_shading){
+                    const auto start = std::chrono::high_resolution_clock::now();
+
+                    const Mesh new_icosphere = Icosphere::generate(subdivision_level.value);
+                    const std::vector<Triangle> triangles = new_icosphere.getTriangles();
+
+                    std::vector<Vertex> vertices;
+                    vertices.reserve(3 * triangles.size());
+
+                    for (const auto &triangle : triangles){
+                        const glm::vec3 normal = triangle.normal();
+                        vertices.emplace_back(triangle.p1, normal);
+                        vertices.emplace_back(triangle.p2, normal);
+                        vertices.emplace_back(triangle.p3, normal);
+                    }
+
+                    const auto end = std::chrono::high_resolution_clock::now();
+                    generation_elapsed = std::chrono::duration<float, std::milli>(end - start).count();
+
+                    flat_shading.num_icosphere_vertices = static_cast<GLsizei>(vertices.size());
+
+                    glBindVertexArray(vao);
+
+                    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+                    glBufferData(GL_ARRAY_BUFFER,
+                                 static_cast<GLsizei>(vertices.size() * sizeof(Vertex)),
+                                 vertices.data(),
+                                 GL_STATIC_DRAW);
+
+                    glVertexAttribPointer(0,
+                                          3,
+                                          GL_FLOAT,
+                                          GL_FALSE,
+                                          sizeof(Vertex),
+                                          reinterpret_cast<GLint*>(offsetof(Vertex, position)));
+                    glEnableVertexAttribArray(0);
+                    glVertexAttribPointer(1,
+                                          3,
+                                          GL_FLOAT,
+                                          GL_FALSE,
+                                          sizeof(Vertex),
+                                          reinterpret_cast<GLint*>(offsetof(Vertex, normal)));
+                    glEnableVertexAttribArray(1);
+                },
+                [&](Shading::Phong &phong_shading){
+                    auto start = std::chrono::high_resolution_clock::now();
+                    const Mesh new_icosphere = Icosphere::generate(subdivision_level.value);
+                    auto end = std::chrono::high_resolution_clock::now();
+                    generation_elapsed = std::chrono::duration<float, std::milli>(end - start).count();
+
+                    phong_shading.num_icosphere_positions = new_icosphere.positions.size();
+                    phong_shading.num_icosphere_indices = 3 * static_cast<GLsizei>(new_icosphere.triangle_indices.size());
+
+                    glBindVertexArray(vao);
+
+                    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+                    glBufferData(GL_ARRAY_BUFFER,
+                                 static_cast<GLsizei>(new_icosphere.positions.size() * sizeof(glm::vec3)),
+                                 new_icosphere.positions.data(),
+                                 GL_STATIC_DRAW);
+
+                    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), nullptr);
+                    glEnableVertexAttribArray(0);
+
+                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+                    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                                 static_cast<GLsizei>(new_icosphere.triangle_indices.size() * sizeof(Mesh::triangle_index_t)),
+                                 new_icosphere.triangle_indices.data(), GL_STATIC_DRAW);
+                }
+            }, shading.value);
+            subdivision_level.is_dirty = false;
+            shading.is_dirty = false;
+        }
+
+        if (fix_light_position.is_dirty) {
+            if (fix_light_position.value){
+                flat_program.setUniform("light_pos", glm::vec3(5.f, 0.f, 0.f));
+                phong_program.setUniform("light_pos", glm::vec3(5.f, 0.f, 0.f));
+            }
+            else{
+                flat_program.setUniform("light_pos", camera.getPosition());
+                phong_program.setUniform("light_pos", camera.getPosition());
+            }
+        }
+
+        updateImGui(time_delta);
+    }
+
+    void draw() const override {
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        std::visit(overload{
+            [&](const Shading::Flat &flat_shading){
+                flat_program.use();
+
+                glBindVertexArray(vao);
+                glDrawArrays(GL_TRIANGLES, 0, flat_shading.num_icosphere_vertices);
+            },
+            [&](const Shading::Phong &phong_shading){
+                phong_program.use();
+
+                glBindVertexArray(vao);
+                glDrawElements(GL_TRIANGLES, phong_shading.num_icosphere_indices, GL_UNSIGNED_INT, nullptr);
+            }
+        }, shading.value);
+
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
+
+    void onCameraChanged(){
+        view = camera.getView();
+        projection = camera.getProjection(getAspectRatio());
+        flat_program.setUniform("view_pos", camera.getPosition());
+        flat_program.setUniform("projection_view", projection * view);
+        phong_program.setUniform("view_pos", camera.getPosition());
+        phong_program.setUniform("projection_view", projection * view);
+    }
+
+    void initImGui() {
+        // Setup Dear ImGui context
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO &io = ImGui::GetIO();
+        (void) io;
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+
+        // Setup Dear ImGui style
+        ImGui::StyleColorsDark();
+
+        // Setup Platform/Renderer backends
+        ImGui_ImplGlfw_InitForOpenGL(window, true);
+        ImGui_ImplOpenGL3_Init("#version 330");
+    }
+
+    void updateImGui(float) {
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        ImGui::Begin("Viewer");
+
+        ImGui::Text("FPS: %d", static_cast<int>(ImGui::GetIO().Framerate));
+
+        if (bool fix_light_position_input = fix_light_position.value;
+            ImGui::Checkbox("Fix light position", &fix_light_position_input)){
+            if (fix_light_position_input != fix_light_position.value){
+                fix_light_position.value = fix_light_position_input;
+                fix_light_position.is_dirty = true;
+            }
+        }
+
+        if (int subdivision_level_input = subdivision_level.value;
+            ImGui::InputInt("Subdivision level", &subdivision_level_input, 1, 1, ImGuiInputTextFlags_EnterReturnsTrue))
+        {
+            subdivision_level_input = std::clamp(subdivision_level_input, 0, 8);
+            if (subdivision_level_input != subdivision_level.value){
+                subdivision_level.value = subdivision_level_input;
+                subdivision_level.is_dirty = true;
+            }
+        }
+
+        ImGui::VariantSelector::radio(
+            shading.value,
+            std::pair {
+                [&](const Shading::Flat &flat_shading){
+                    ImGui::Text("# of vertices: %d", flat_shading.num_icosphere_vertices);
+                },
+                [&]{
+                    shading.is_dirty = true;
+                    return Shading::Flat{};
+                }
+            },
+            std::pair {
+                [&](const Shading::Phong &phong_shading){
+                    ImGui::Text("# of positions: %zu", phong_shading.num_icosphere_positions);
+                    ImGui::Text("# of indices: %d", phong_shading.num_icosphere_indices);
+                },
+                [&]{
+                    shading.is_dirty = true;
+                    return Shading::Phong{};
+                }
+            }
+        );
+        ImGui::Text("Generation time: %.3f ms", generation_elapsed);
+
+        ImGui::End();
+
+        ImGui::Render();
+    }
+
+public:
+    Viewer() : OpenGL::Window { 800, 480, "Viewer" },
+               flat_program { "shaders/flat.vert", "shaders/flat.frag" },
+               phong_program { "shaders/phong.vert", "shaders/phong.frag" }
+    {
+        camera.distance = 5.f;
+        camera.addYaw(glm::radians(180.f));
+        view = camera.getView();
+        projection = camera.getProjection(getAspectRatio());
+
+        flat_program.setUniform("view_pos", camera.getPosition());
+        flat_program.setUniform("light_pos", camera.getPosition());
+        flat_program.setUniform("projection_view", projection * view);
+        phong_program.setUniform("view_pos", camera.getPosition());
+        phong_program.setUniform("light_pos", camera.getPosition());
+        phong_program.setUniform("projection_view", projection * view);
+
+        glGenVertexArrays(1, &vao);
+        glGenBuffers(1, &vbo);
+        glGenBuffers(1, &ebo);
+
+        // Front face of triangles are counter-clockwise.
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        glFrontFace(GL_CCW);
+
+        initImGui();
+    }
+
+    ~Viewer() noexcept override{
+        glDeleteVertexArrays(1, &vao);
+        glDeleteBuffers(1, &vbo);
+        glDeleteBuffers(1, &ebo);
+
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+    }
+};
+
+int main() {
+    Viewer{}.run();
+}
