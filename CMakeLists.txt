@@ -9,7 +9,7 @@ include(FetchContent)
 FetchContent_Declare(
     OpenGLApp
     GIT_REPOSITORY https://github.com/stripe2933/OpenGLApp.git
-    GIT_TAG c58cad8
+    GIT_TAG 6e64ccd
 )
 FetchContent_MakeAvailable(OpenGLApp)
 

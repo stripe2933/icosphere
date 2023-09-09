@@ -77,9 +77,10 @@ private:
             return;
         }
 
+        constexpr float min_distance = 1.2f;
         camera.distance = std::fmax(
             std::exp(input.scroll_sensitivity * static_cast<float>(-yoffset)) * camera.distance,
-            camera.min_distance
+            min_distance
         );
         onCameraChanged();
     }
@@ -347,11 +348,8 @@ public:
             glBindBuffer(GL_UNIFORM_BUFFER, mvp_matrix_ubo);
             glBufferData(GL_UNIFORM_BUFFER, sizeof(MvpMatrixUniform), &mvp_matrix, GL_DYNAMIC_DRAW);
 
-            const GLuint flat_program_mvp_matrix_index = glGetUniformBlockIndex(flat_program.handle, "MvpMatrix");
-            glUniformBlockBinding(flat_program.handle, flat_program_mvp_matrix_index, 0);
-            const GLuint phong_program_mvp_matrix_index = glGetUniformBlockIndex(phong_program.handle, "MvpMatrix");
-            glUniformBlockBinding(phong_program.handle, phong_program_mvp_matrix_index, 0);
-
+            flat_program.setUniformBlockBinding("MvpMatrix", 0);
+            phong_program.setUniformBlockBinding("MvpMatrix", 0);
             glBindBufferBase(GL_UNIFORM_BUFFER, 0, mvp_matrix_ubo);
         }
 
@@ -361,11 +359,8 @@ public:
             glBufferData(GL_UNIFORM_BUFFER, sizeof(LightingUniform), nullptr /* will be updated later */,
                          GL_DYNAMIC_DRAW);
 
-            const GLuint flat_program_lighting_index = glGetUniformBlockIndex(flat_program.handle, "Lighting");
-            glUniformBlockBinding(flat_program.handle, flat_program_lighting_index, 1);
-            const GLuint phong_program_lighting_index = glGetUniformBlockIndex(phong_program.handle, "Lighting");
-            glUniformBlockBinding(phong_program.handle, phong_program_lighting_index, 1);
-
+            flat_program.setUniformBlockBinding("Lighting", 1);
+            phong_program.setUniformBlockBinding("Lighting", 1);
             glBindBufferBase(GL_UNIFORM_BUFFER, 1, lighting_ubo);
         }
 
