@@ -26,8 +26,8 @@ struct Shading{
     using Type = std::variant<Flat, Phong>;
 };
 
-template<> struct ImGuiLabel<Shading::Flat>{ static constexpr const char *value = "Flat shading"; };
-template<> struct ImGuiLabel<Shading::Phong>{ static constexpr const char *value = "Phong shading"; };
+IMGUI_LABEL(Shading::Flat, "Flat shading");
+IMGUI_LABEL(Shading::Phong, "Phong shading");
 
 struct MvpMatrixUniform{
     glm::mat4 model;

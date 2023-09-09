@@ -10,30 +10,16 @@
 #include <imgui.h>
 
 template <typename T>
-struct ImGuiLabel{
+struct ImGuiLabel { };
 
-};
+#define IMGUI_LABEL(type, label) \
+    template <> \
+    struct ImGuiLabel<type> { \
+        static constexpr const char *value = label; \
+    }
 
 namespace ImGui::VariantSelector{
     namespace details{
-        template <typename>
-        struct is_pair_t : std::false_type {};
-
-        template <typename U, typename V>
-        struct is_pair_t<std::pair<U, V>> : std::true_type {};
-
-        template <typename T>
-        concept pair_t = is_pair_t<T>::value;
-
-        template <typename>
-        struct is_variant_t : std::false_type {};
-
-        template <typename... Ts>
-        struct is_variant_t<std::variant<Ts...>> : std::true_type {};
-
-        template <typename T>
-        concept variant_t = is_variant_t<T>::value;
-
         // https://www.walletfox.com/course/patternmatchingcpp17.php
         template<class... Ts>
         struct overload : Ts... {
@@ -44,7 +30,7 @@ namespace ImGui::VariantSelector{
         overload(Ts...) -> overload<Ts...>;
 
         template <typename T>
-        void single_radio(variant_t auto &variant, pair_t auto &&args){
+        void single_radio(auto &variant, auto &&args){
             auto &&[select_function, default_function] = args;
 
             if (bool selected = std::holds_alternative<T>(variant);
@@ -58,7 +44,7 @@ namespace ImGui::VariantSelector{
         }
 
         template <typename T, typename Default>
-        void single_combo(variant_t auto &variant, Default &&default_function){
+        void single_combo(auto &variant, Default &&default_function){
             if (bool selected = std::holds_alternative<T>(variant);
                 ImGui::Selectable(ImGuiLabel<T>::value, selected) && !selected)
             {
