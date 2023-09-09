@@ -19,8 +19,9 @@ struct Triangle{
     }
 };
 
+template <typename IndexType>
 struct Mesh{
-    using triangle_index_t = std::array<unsigned int, 3>;
+    using triangle_index_t = std::array<IndexType, 3>;
     using positions_t = std::vector<glm::vec3>;
     using triangle_indices_t = std::vector<triangle_index_t>;
 
@@ -44,15 +45,19 @@ struct Mesh{
     }
 };
 
+template <typename IndexType>
 class Icosphere{
 private:
+    using mesh_t = Mesh<IndexType>;
+    using triangle_index_t = mesh_t::triangle_index_t;
+
     struct pair_hash{
-        constexpr std::size_t operator()(std::pair<unsigned int, unsigned int> pair) const noexcept{
+        constexpr std::size_t operator()(std::pair<IndexType, IndexType> pair) const noexcept{
             // Boost hash_combine.
             // https://stackoverflow.com/questions/35985960/c-why-is-boosthash-combine-the-best-way-to-combine-hash-values
 
-            std::size_t seed = std::hash<unsigned int>{}(pair.first);
-            seed ^= std::hash<unsigned int>{}(pair.second) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+            std::size_t seed = std::hash<IndexType>{}(pair.first);
+            seed ^= std::hash<IndexType>{}(pair.second) + 0x9e3779b9 + (seed<<6) + (seed>>2);
             return seed;
         }
     };
@@ -72,35 +77,35 @@ private:
         glm::vec3 {  0.0000000e+00,  0.0000000e+00, -1.0000000e+00 }
     };
 
-    static constexpr std::array<Mesh::triangle_index_t, 20> subdivision_0_indices {
-        Mesh::triangle_index_t {  0,  1,  2 },
-        Mesh::triangle_index_t {  0,  2,  3 },
-        Mesh::triangle_index_t {  0,  3,  4 },
-        Mesh::triangle_index_t {  0,  4,  5 },
-        Mesh::triangle_index_t {  0,  5,  1 },
-        Mesh::triangle_index_t {  1,  6,  2 },
-        Mesh::triangle_index_t {  2,  7,  3 },
-        Mesh::triangle_index_t {  3,  8,  4 },
-        Mesh::triangle_index_t {  4,  9,  5 },
-        Mesh::triangle_index_t {  5, 10,  1 },
-        Mesh::triangle_index_t {  2,  6,  7 },
-        Mesh::triangle_index_t {  3,  7,  8 },
-        Mesh::triangle_index_t {  4,  8,  9 },
-        Mesh::triangle_index_t {  5,  9, 10 },
-        Mesh::triangle_index_t {  1, 10,  6 },
-        Mesh::triangle_index_t {  6, 11,  7 },
-        Mesh::triangle_index_t {  7, 11,  8 },
-        Mesh::triangle_index_t {  8, 11,  9 },
-        Mesh::triangle_index_t {  9, 11, 10 },
-        Mesh::triangle_index_t { 10, 11,  6 }
+    static constexpr std::array<triangle_index_t, 20> subdivision_0_indices {
+        triangle_index_t {  0,  1,  2 },
+        triangle_index_t {  0,  2,  3 },
+        triangle_index_t {  0,  3,  4 },
+        triangle_index_t {  0,  4,  5 },
+        triangle_index_t {  0,  5,  1 },
+        triangle_index_t {  1,  6,  2 },
+        triangle_index_t {  2,  7,  3 },
+        triangle_index_t {  3,  8,  4 },
+        triangle_index_t {  4,  9,  5 },
+        triangle_index_t {  5, 10,  1 },
+        triangle_index_t {  2,  6,  7 },
+        triangle_index_t {  3,  7,  8 },
+        triangle_index_t {  4,  8,  9 },
+        triangle_index_t {  5,  9, 10 },
+        triangle_index_t {  1, 10,  6 },
+        triangle_index_t {  6, 11,  7 },
+        triangle_index_t {  7, 11,  8 },
+        triangle_index_t {  8, 11,  9 },
+        triangle_index_t {  9, 11, 10 },
+        triangle_index_t { 10, 11,  6 }
     };
 
-    static constexpr std::pair<unsigned int, unsigned int> make_index_pair(unsigned int idx1, unsigned int idx2) noexcept{
+    static constexpr std::pair<IndexType, IndexType> make_ascending_pair(IndexType idx1, IndexType idx2) noexcept{
         return idx1 < idx2 ? std::make_pair(idx1, idx2) : std::make_pair(idx2, idx1);
     }
 
 public:
-    static Mesh generate(std::uint8_t level) noexcept{
+    static mesh_t generate(std::uint8_t level) noexcept{
         if (level == 0){
             return { .positions = { subdivision_0_positions.cbegin(), subdivision_0_positions.cend() },
                      .triangle_indices = { subdivision_0_indices.cbegin(), subdivision_0_indices.cend() } };
@@ -114,7 +119,7 @@ public:
          *     (기존 삼각형 개수) * 3 / 2 + (기존 좌표 개수)
          * 이다.
          */
-        Mesh::positions_t new_positions { std::move(previous_positions) };
+        typename mesh_t::positions_t new_positions { std::move(previous_positions) };
         new_positions.reserve(new_positions.size() + previous_triangle_indices.size() * 3 / 2);
 
         /*
@@ -122,7 +127,7 @@ public:
          *     (기존 삼각형 개수) * 4
          * 이다.
          */
-        Mesh::triangle_indices_t new_triangle_indices;
+        typename mesh_t::triangle_indices_t new_triangle_indices;
         new_triangle_indices.reserve(previous_triangle_indices.size() * 4);
 
         /*
@@ -131,29 +136,29 @@ public:
          * 다음 사용 시 중점을 edge_midpoints에서 불러와 사용하고, 이후 해당 중점은 다시 탐색되지 않으므로 (중점은 오직 두 개의 삼각형에서만
          * 사용되므로) edge_midpoints에서 삭제한다.
          */
-        std::unordered_map<std::pair<unsigned int, unsigned int>, unsigned int, pair_hash> edge_midpoints;
-        const auto process_midpoint = [&](unsigned int idx1, unsigned int idx2) -> unsigned int /* midpoint index */ {
-            if (auto it = edge_midpoints.find(make_index_pair(idx1, idx2)); it != edge_midpoints.end()){
-                const unsigned int midpoint_index = it->second;
+        std::unordered_map<std::pair<IndexType, IndexType>, IndexType, pair_hash> edge_midpoints;
+        const auto process_midpoint = [&](IndexType idx1, IndexType idx2) -> IndexType /* midpoint index */ {
+            if (auto it = edge_midpoints.find(make_ascending_pair(idx1, idx2)); it != edge_midpoints.end()){
+                const IndexType midpoint_index = it->second;
                 edge_midpoints.erase(it);
                 return midpoint_index;
             }
             else{
                 glm::vec3 &midpoint = new_positions.emplace_back(glm::normalize((new_positions[idx1] + new_positions[idx2]) / 2.f));
-                const unsigned int midpoint_index = std::distance(new_positions.begin().base(), &midpoint);
-                edge_midpoints.emplace(make_index_pair(idx1, idx2), midpoint_index);
+                const IndexType midpoint_index = std::distance(new_positions.begin().base(), &midpoint);
+                edge_midpoints.emplace(make_ascending_pair(idx1, idx2), midpoint_index);
                 return midpoint_index;
             }
         };
-        for (auto [i1, i2, i3] : previous_triangle_indices){
-            const unsigned int m12 = process_midpoint(i1, i2);
-            const unsigned int m23 = process_midpoint(i2, i3);
-            const unsigned int m31 = process_midpoint(i3, i1);
+        for (const auto [i1, i2, i3] : previous_triangle_indices){
+            const IndexType m12 = process_midpoint(i1, i2);
+            const IndexType m23 = process_midpoint(i2, i3);
+            const IndexType m31 = process_midpoint(i3, i1);
 
-            new_triangle_indices.emplace_back(Mesh::triangle_index_t { i1, m12, m31 });
-            new_triangle_indices.emplace_back(Mesh::triangle_index_t { m12, i2, m23 });
-            new_triangle_indices.emplace_back(Mesh::triangle_index_t { m31, m23, i3 });
-            new_triangle_indices.emplace_back(Mesh::triangle_index_t { m12, m23, m31 });
+            new_triangle_indices.emplace_back(triangle_index_t { i1, m12, m31 });
+            new_triangle_indices.emplace_back(triangle_index_t { m12, i2, m23 });
+            new_triangle_indices.emplace_back(triangle_index_t { m31, m23, i3 });
+            new_triangle_indices.emplace_back(triangle_index_t { m12, m23, m31 });
         }
 
         // Assertions.

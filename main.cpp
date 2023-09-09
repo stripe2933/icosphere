@@ -111,7 +111,7 @@ private:
                 [&](Shading::Flat &flat_shading){
                     const auto start = std::chrono::high_resolution_clock::now();
 
-                    const Mesh new_icosphere = Icosphere::generate(subdivision_level.value);
+                    const Mesh<unsigned int> new_icosphere = Icosphere<unsigned int>::generate(subdivision_level.value);
                     const std::vector<Triangle> triangles = new_icosphere.getTriangles();
 
                     std::vector<Vertex> vertices;
@@ -153,9 +153,9 @@ private:
                     glEnableVertexAttribArray(1);
                 },
                 [&](Shading::Phong &phong_shading){
-                    auto start = std::chrono::high_resolution_clock::now();
-                    const Mesh new_icosphere = Icosphere::generate(subdivision_level.value);
-                    auto end = std::chrono::high_resolution_clock::now();
+                    const auto start = std::chrono::high_resolution_clock::now();
+                    const Mesh<unsigned int> new_icosphere = Icosphere<unsigned int>::generate(subdivision_level.value);
+                    const auto end = std::chrono::high_resolution_clock::now();
                     generation_elapsed = std::chrono::duration<float, std::milli>(end - start).count();
 
                     phong_shading.num_icosphere_positions = new_icosphere.positions.size();
@@ -174,7 +174,7 @@ private:
 
                     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
                     glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-                                 static_cast<GLsizei>(new_icosphere.triangle_indices.size() * sizeof(Mesh::triangle_index_t)),
+                                 static_cast<GLsizei>(new_icosphere.triangle_indices.size() * sizeof(Mesh<unsigned int>::triangle_index_t)),
                                  new_icosphere.triangle_indices.data(), GL_STATIC_DRAW);
                 }
             }, shading.value);
