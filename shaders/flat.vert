@@ -50,6 +50,7 @@ const PointLight light = PointLight(
 
 void main(){
     vec3 fragPos = vec3(model * vec4(aPos, 1.0));
+    vec3 normal = normalize(mat3(transpose(inv_model)) * aNormal);
     gl_Position = projection_view * vec4(fragPos, 1.0);
 
     // ambient
@@ -57,12 +58,12 @@ void main(){
 
     // diffuse
     vec3 lightDir = normalize(light_pos - fragPos);
-    float diff = max(dot(aNormal, lightDir), 0.0);
+    float diff = max(dot(normal, lightDir), 0.0);
     vec3 diffuse = light.diffuse * (diff * material.diffuse);
 
     // specular
     vec3 viewDir = normalize(view_pos - fragPos);
-    vec3 reflectDir = reflect(-lightDir, aNormal);
+    vec3 reflectDir = reflect(-lightDir, normal);
     float spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
     vec3 specular = light.specular * (spec * material.specular);
 
