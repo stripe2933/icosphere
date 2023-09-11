@@ -36,15 +36,23 @@ struct MvpMatrixUniform{
 };
 
 struct LightingUniform{
-    alignas(16) glm::vec3 view_pos;  // base alignment must be 16 for vec3.
-    alignas(16) glm::vec3 light_pos; // base alignment must be 16 for vec3.
+    alignas(16) glm::vec3 view_pos;  // std140: base alignment must be 16 for vec3.
+    alignas(16) glm::vec3 light_pos; // std140: base alignment must be 16 for vec3.
+
+    constexpr bool operator==(const LightingUniform &rhs) const noexcept {
+        return view_pos == rhs.view_pos && light_pos == rhs.light_pos;
+    }
+
+    constexpr bool operator!=(const LightingUniform &rhs) const noexcept {
+        return !(rhs == *this);
+    }
 };
 
 class Viewer final : public OpenGL::Window {
 private:
-    DirtyProperty<int> subdivision_level = 0;
-    DirtyProperty<Shading::Type> shading = Shading::Phong{};
-    DirtyProperty<bool> fix_light_position = false; // true -> light is fixed at (5, 0, 0), false -> light is at camera position.
+    DirtyProperty<int> subdivision_level { 0 };
+    DirtyProperty<Shading::Type> shading { Shading::Phong{} };
+    DirtyProperty<bool> fix_light_position { false }; // true -> light is fixed at (5, 0, 0), false -> light is at camera position.
     float generation_elapsed = 0.f;
 
     std::optional<glm::vec2> previous_mouse_position;
@@ -55,8 +63,8 @@ private:
     OpenGL::Camera camera;
 
     OpenGL::Program flat_program, phong_program;
-    MvpMatrixUniform mvp_matrix;
-    LightingUniform lighting;
+    DirtyProperty<MvpMatrixUniform> mvp_matrix;
+    DirtyProperty<LightingUniform> lighting;
 
     GLuint vao;
     std::array<GLuint, 4> buffer_objects;
@@ -125,13 +133,14 @@ private:
     }
 
     void update(float time_delta) override {
-        if (subdivision_level.is_dirty || shading.is_dirty){
+        // If either subdivision_level or shading is changed, the vertices should be recalculated.
+        DirtyPropertyHelper::clean([&](std::uint8_t new_subdivision_level, Shading::Type &new_shading){
             std::visit(overload {
                 [&](Shading::Flat &flat_shading){
                     const auto start = std::chrono::high_resolution_clock::now();
 
-                    const auto triangles = Icosphere<unsigned int>::generate(subdivision_level.value) /* new icosphere */
-                        .getTriangles();
+                    const auto triangles = Icosphere<unsigned int>::generate(new_subdivision_level) /* new icosphere */
+                            .getTriangles();
 
                     std::vector<Vertex> vertices;
                     vertices.reserve(3 * triangles.size());
@@ -173,7 +182,7 @@ private:
                 },
                 [&](Shading::Phong &phong_shading){
                     const auto start = std::chrono::high_resolution_clock::now();
-                    const Mesh<unsigned int> new_icosphere = Icosphere<unsigned int>::generate(subdivision_level.value);
+                    const Mesh<unsigned int> new_icosphere = Icosphere<unsigned int>::generate(new_subdivision_level);
                     const auto end = std::chrono::high_resolution_clock::now();
                     generation_elapsed = std::chrono::duration<float, std::milli>(end - start).count();
 
@@ -198,22 +207,26 @@ private:
                                  static_cast<GLsizei>(new_icosphere.triangle_indices.size() * sizeof(Mesh<unsigned int>::triangle_index_t)),
                                  new_icosphere.triangle_indices.data(), GL_STATIC_DRAW);
                 }
-            }, shading.value);
-            subdivision_level.is_dirty = false;
-            shading.is_dirty = false;
-        }
+            }, new_shading);
+        }, subdivision_level, shading);
 
-        if (fix_light_position.is_dirty) {
-            if (fix_light_position.value){
-                lighting.light_pos = glm::vec3(5.f, 0.f, 0.f);
-            }
-            else{
-                lighting.light_pos = camera.getPosition();
-            }
+        // MVP Matrix UBO should be updated when it changed.
+        mvp_matrix.clean([&](const MvpMatrixUniform &value){
+            glBindBuffer(GL_UNIFORM_BUFFER, mvp_matrix_ubo);
+            glBufferData(GL_UNIFORM_BUFFER, sizeof(MvpMatrixUniform), &value, GL_DYNAMIC_DRAW);
+        });
 
+        // If fix_light_position is updated, lighting should be updated.
+        fix_light_position.clean([&](bool value){
+            lighting.mutableValue().light_pos = getLightPosition();
+            lighting.makeDirty();
+        });
+
+        // Lighting UBO should be updated when it changed.
+        lighting.clean([&](const LightingUniform &value){
             glBindBuffer(GL_UNIFORM_BUFFER, lighting_ubo);
-            glBufferData(GL_UNIFORM_BUFFER, sizeof(LightingUniform), &lighting, GL_DYNAMIC_DRAW);
-        }
+            glBufferData(GL_UNIFORM_BUFFER, sizeof(LightingUniform), &value, GL_DYNAMIC_DRAW);
+        });
 
         updateImGui(time_delta);
     }
@@ -234,19 +247,20 @@ private:
                 glBindVertexArray(vao);
                 glDrawElements(GL_TRIANGLES, phong_shading.num_icosphere_indices, GL_UNSIGNED_INT, nullptr);
             }
-        }, shading.value);
+        }, shading.value());
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 
-    void onCameraChanged(){
-        mvp_matrix.projection_view = camera.getProjection(getAspectRatio()) * camera.getView();
-        glBindBuffer(GL_UNIFORM_BUFFER, mvp_matrix_ubo);
-        glBufferData(GL_UNIFORM_BUFFER, sizeof(MvpMatrixUniform), &mvp_matrix, GL_DYNAMIC_DRAW);
+    glm::vec3 getLightPosition() const{
+        return fix_light_position.value() ? glm::vec3 { 5.f, 0.f, 0.f } : camera.getPosition();
+    }
 
-        lighting.view_pos = camera.getPosition();
-        glBindBuffer(GL_UNIFORM_BUFFER, lighting_ubo);
-        glBufferData(GL_UNIFORM_BUFFER, sizeof(LightingUniform), &lighting, GL_DYNAMIC_DRAW);
+    void onCameraChanged(){
+        mvp_matrix.mutableValue().projection_view = camera.getProjection(getAspectRatio()) * camera.getView();
+        mvp_matrix.makeDirty();
+
+        lighting = LightingUniform { .view_pos = camera.getPosition(), .light_pos = getLightPosition() };
     }
 
     void initImGui() {
@@ -274,33 +288,29 @@ private:
 
         ImGui::Text("FPS: %d", static_cast<int>(ImGui::GetIO().Framerate));
 
-        if (bool fix_light_position_input = fix_light_position.value;
-            ImGui::Checkbox("Fix light position", &fix_light_position_input))
+        if (bool input = fix_light_position.value();
+            ImGui::Checkbox("Fix light position", &input))
         {
-            if (fix_light_position_input != fix_light_position.value){
-                fix_light_position.value = fix_light_position_input;
-                fix_light_position.is_dirty = true;
-            }
+            fix_light_position = input;
         }
 
-        if (int subdivision_level_input = subdivision_level.value;
+        if (int subdivision_level_input = subdivision_level.value();
             ImGui::InputInt("Subdivision level", &subdivision_level_input, 1, 1, ImGuiInputTextFlags_EnterReturnsTrue))
         {
-            subdivision_level_input = std::clamp(subdivision_level_input, 0, 8);
-            if (subdivision_level_input != subdivision_level.value){
-                subdivision_level.value = subdivision_level_input;
-                subdivision_level.is_dirty = true;
-            }
+            subdivision_level = std::clamp(subdivision_level_input, 0, 8);
         }
 
         ImGui::VariantSelector::radio(
-            shading.value,
+            shading.mutableValue(),
             std::pair {
                 [&](const Shading::Flat &flat_shading){
                     ImGui::Text("# of vertices: %d", flat_shading.num_icosphere_vertices);
                 },
                 [&]{
-                    shading.is_dirty = true;
+                    // This lambda executed when user select shading mode as flat shading, and VariantSelector assign
+                    // the Shading::Flat{} to mutable reference of shading property's stored value. Therefore, it should
+                    // be explicitly make the property dirty to indicate the property value is modified.
+                    shading.makeDirty();
                     return Shading::Flat{};
                 }
             },
@@ -310,7 +320,10 @@ private:
                     ImGui::Text("# of indices: %d", phong_shading.num_icosphere_indices);
                 },
                 [&]{
-                    shading.is_dirty = true;
+                    // This lambda executed when user select shading mode as phong shading, and VariantSelector assign
+                    // the Shading::Phong{} to mutable reference of shading property's stored value. Therefore, it should
+                    // be explicitly make the property dirty to indicate the property value is modified.
+                    shading.makeDirty();
                     return Shading::Phong{};
                 }
             }
@@ -330,13 +343,15 @@ public:
         camera.distance = 5.f;
         camera.addYaw(glm::radians(180.f));
 
-        // Set MVP matrix.
-        mvp_matrix.model = glm::identity<glm::mat4>(); // You can use your own transform matrix here.
-        mvp_matrix.inv_model = glm::inverse(mvp_matrix.model);
-        mvp_matrix.projection_view = camera.getProjection(getAspectRatio()) * camera.getView();
+        const auto model = glm::identity<glm::mat4>(); // You can use your own transform matrix here.
+        mvp_matrix.mutableValue() = MvpMatrixUniform {
+            .model = model,
+            .inv_model = glm::inverse(model),
+            .projection_view = camera.getProjection(getAspectRatio()) * camera.getView(),
+        };
+        mvp_matrix.makeDirty();
 
-        // Set lighting properties.
-        lighting.view_pos = camera.getPosition();
+        lighting = LightingUniform { .view_pos = camera.getPosition(), .light_pos = getLightPosition() };
 
         // VAO for icosphere.
         glGenVertexArrays(1, &vao);
@@ -346,21 +361,18 @@ public:
         // MVP matrix UBO.
         {
             glBindBuffer(GL_UNIFORM_BUFFER, mvp_matrix_ubo);
-            glBufferData(GL_UNIFORM_BUFFER, sizeof(MvpMatrixUniform), &mvp_matrix, GL_DYNAMIC_DRAW);
+            glBufferData(GL_UNIFORM_BUFFER, sizeof(MvpMatrixUniform), nullptr, GL_DYNAMIC_DRAW);
 
-            flat_program.setUniformBlockBinding("MvpMatrix", 0);
-            phong_program.setUniformBlockBinding("MvpMatrix", 0);
+            OpenGL::Program::setUniformBlockBindings("MvpMatrix", 0, flat_program, phong_program);
             glBindBufferBase(GL_UNIFORM_BUFFER, 0, mvp_matrix_ubo);
         }
 
         // Lighting UBO.
         {
             glBindBuffer(GL_UNIFORM_BUFFER, lighting_ubo);
-            glBufferData(GL_UNIFORM_BUFFER, sizeof(LightingUniform), nullptr /* will be updated later */,
-                         GL_DYNAMIC_DRAW);
+            glBufferData(GL_UNIFORM_BUFFER, sizeof(LightingUniform), nullptr, GL_DYNAMIC_DRAW);
 
-            flat_program.setUniformBlockBinding("Lighting", 1);
-            phong_program.setUniformBlockBinding("Lighting", 1);
+            OpenGL::Program::setUniformBlockBindings("Lighting", 1, flat_program, phong_program);
             glBindBufferBase(GL_UNIFORM_BUFFER, 1, lighting_ubo);
         }
 
