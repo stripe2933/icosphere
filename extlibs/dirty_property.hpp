@@ -69,10 +69,8 @@ public:
     }
 
     constexpr DirtyProperty &operator=(auto &&new_value){
-        if (data != new_value){
-            data = std::forward<decltype(new_value)>(new_value);
-            is_dirty = true;
-        }
+        data = std::forward<decltype(new_value)>(new_value);
+        is_dirty = true;
         return *this;
     }
 

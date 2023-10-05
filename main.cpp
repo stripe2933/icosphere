@@ -38,14 +38,6 @@ struct MvpMatrixUniform{
 struct LightingUniform{
     alignas(16) glm::vec3 view_pos;  // std140: base alignment must be 16 for vec3.
     alignas(16) glm::vec3 light_pos; // std140: base alignment must be 16 for vec3.
-
-    constexpr bool operator==(const LightingUniform &rhs) const noexcept {
-        return view_pos == rhs.view_pos && light_pos == rhs.light_pos;
-    }
-
-    constexpr bool operator!=(const LightingUniform &rhs) const noexcept {
-        return !(rhs == *this);
-    }
 };
 
 class Viewer final : public OpenGL::Window {
