@@ -60,7 +60,7 @@ private:
         float scroll_sensitivity = 0.1f;
         float pan_sensitivity = 3e-3f;
     } input;
-    OpenGL::Camera camera;
+    OpenGL::PerspectiveCamera camera;
 
     OpenGL::Program flat_program, phong_program;
     DirtyProperty<MvpMatrixUniform> mvp_matrix;
@@ -86,8 +86,8 @@ private:
         }
 
         constexpr float min_distance = 1.2f;
-        camera.distance = std::fmax(
-            std::exp(input.scroll_sensitivity * static_cast<float>(-yoffset)) * camera.distance,
+        camera.view.distance = std::fmax(
+            std::exp(input.scroll_sensitivity * static_cast<float>(-yoffset)) * camera.view.distance,
             min_distance
         );
         onCameraChanged();
@@ -125,8 +125,8 @@ private:
             const glm::vec2 offset = input.pan_sensitivity * (position - previous_mouse_position.value());
             previous_mouse_position = position;
 
-            camera.addYaw(offset.x);
-            camera.addPitch(-offset.y);
+            camera.view.addYaw(offset.x);
+            camera.view.addPitch(-offset.y);
 
             onCameraChanged();
         }
@@ -253,14 +253,14 @@ private:
     }
 
     glm::vec3 getLightPosition() const{
-        return fix_light_position.value() ? glm::vec3 { 5.f, 0.f, 0.f } : camera.getPosition();
+        return fix_light_position.value() ? glm::vec3 { 5.f, 0.f, 0.f } : camera.view.getPosition();
     }
 
     void onCameraChanged(){
-        mvp_matrix.mutableValue().projection_view = camera.getProjection(getAspectRatio()) * camera.getView();
+        mvp_matrix.mutableValue().projection_view = camera.projection.getMatrix(getFramebufferAspectRatio()) * camera.view.getMatrix();
         mvp_matrix.makeDirty();
 
-        lighting = LightingUniform { .view_pos = camera.getPosition(), .light_pos = getLightPosition() };
+        lighting = LightingUniform { .view_pos = camera.view.getPosition(), .light_pos = getLightPosition() };
     }
 
     void initImGui() {
@@ -340,18 +340,18 @@ public:
                flat_program { "shaders/flat.vert", "shaders/flat.frag" },
                phong_program { "shaders/phong.vert", "shaders/phong.frag" }
     {
-        camera.distance = 5.f;
-        camera.addYaw(glm::radians(180.f));
+        camera.view.distance = 5.f;
+        camera.view.addYaw(glm::radians(180.f));
 
         const auto model = glm::identity<glm::mat4>(); // You can use your own transform matrix here.
         mvp_matrix.mutableValue() = MvpMatrixUniform {
             .model = model,
             .inv_model = glm::inverse(model),
-            .projection_view = camera.getProjection(getAspectRatio()) * camera.getView(),
+            .projection_view = camera.projection.getMatrix(getAspectRatio()) * camera.view.getMatrix(),
         };
         mvp_matrix.makeDirty();
 
-        lighting = LightingUniform { .view_pos = camera.getPosition(), .light_pos = getLightPosition() };
+        lighting = LightingUniform { .view_pos = camera.view.getPosition(), .light_pos = getLightPosition() };
 
         // VAO for icosphere.
         glGenVertexArrays(1, &vao);
