@@ -13,7 +13,7 @@
 #include "icosphere.hpp"
 #include "vertex.hpp"
 
-struct Shading{
+namespace Shading{
     struct Flat {
         GLsizei num_icosphere_vertices = 0;
     };
@@ -24,7 +24,7 @@ struct Shading{
     };
 
     using Type = std::variant<Flat, Phong>;
-};
+}
 
 IMGUI_LABEL(Shading::Flat, "Flat shading");
 IMGUI_LABEL(Shading::Phong, "Phong shading");
@@ -40,6 +40,15 @@ struct LightingUniform{
     alignas(16) glm::vec3 light_pos; // std140: base alignment must be 16 for vec3.
 };
 
+template <typename Period, typename Func, typename... FuncArgs>
+auto measure(Func &&func, FuncArgs &&...args) -> std::pair<std::chrono::duration<float, Period>, std::invoke_result_t<Func, FuncArgs...>>{
+    const auto start = std::chrono::high_resolution_clock::now();
+    auto &&result = std::invoke(std::forward<Func>(func), std::forward<FuncArgs>(args)...);
+    const auto end = std::chrono::high_resolution_clock::now();
+
+    return std::make_pair(std::chrono::duration<float, Period>(end - start), std::forward<decltype(result)>(result));
+}
+
 class Viewer final : public OpenGL::Window {
 private:
     DirtyProperty<int> subdivision_level { 0 };
@@ -48,22 +57,19 @@ private:
     float generation_elapsed = 0.f;
 
     std::optional<glm::vec2> previous_mouse_position;
-    const struct{
-        float scroll_sensitivity = 0.1f;
-        float pan_sensitivity = 3e-3f;
-    } input;
     OpenGL::PerspectiveCamera camera;
 
-    OpenGL::Program flat_program, phong_program;
+    const OpenGL::Program flat_program { "shaders/flat.vert", "shaders/flat.frag" },
+                          phong_program { "shaders/phong.vert", "shaders/phong.frag" };
     DirtyProperty<MvpMatrixUniform> mvp_matrix;
     DirtyProperty<LightingUniform> lighting;
 
     GLuint vao;
     std::array<GLuint, 4> buffer_objects;
-    GLuint &vbo            = buffer_objects[0],
-           &ebo            = buffer_objects[1],
-           &mvp_matrix_ubo = buffer_objects[2],
-           &lighting_ubo   = buffer_objects[3];
+    GLuint &vbo            = std::get<0>(buffer_objects),
+           &ebo            = std::get<1>(buffer_objects),
+           &mvp_matrix_ubo = std::get<2>(buffer_objects),
+           &lighting_ubo   = std::get<3>(buffer_objects);
 
     void onFramebufferSizeChanged(int width, int height) override {
         OpenGL::Window::onFramebufferSizeChanged(width, height);
@@ -77,9 +83,10 @@ private:
             return;
         }
 
+        constexpr float scroll_sensitivity = 0.1f;
         constexpr float min_distance = 1.2f;
         camera.view.distance = std::fmax(
-            std::exp(input.scroll_sensitivity * static_cast<float>(-yoffset)) * camera.view.distance,
+            std::exp(scroll_sensitivity * static_cast<float>(-yoffset)) * camera.view.distance,
             min_distance
         );
         onCameraChanged();
@@ -101,7 +108,6 @@ private:
         else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE){
             previous_mouse_position = std::nullopt;
         }
-        onCameraChanged();
     }
 
     void onCursorPosChanged(double xpos, double ypos) override {
@@ -114,7 +120,8 @@ private:
         }
 
         if (previous_mouse_position.has_value()) {
-            const glm::vec2 offset = input.pan_sensitivity * (position - previous_mouse_position.value());
+            constexpr float pan_sensitivity = 3e-3f;
+            const glm::vec2 offset = pan_sensitivity * (position - previous_mouse_position.value());
             previous_mouse_position = position;
 
             camera.view.addYaw(offset.x);
@@ -129,23 +136,24 @@ private:
         DirtyPropertyHelper::clean([&](std::uint8_t new_subdivision_level, Shading::Type &new_shading){
             std::visit(overload {
                 [&](Shading::Flat &flat_shading){
-                    const auto start = std::chrono::high_resolution_clock::now();
+                    // Create vertices with elapsed time measurement.
+                    const auto &&[elapsed, vertices] = measure<std::milli>([&]{
+                        const auto triangles = Icosphere<unsigned int>::generate(new_subdivision_level) /* new icosphere */
+                                .getTriangles();
 
-                    const auto triangles = Icosphere<unsigned int>::generate(new_subdivision_level) /* new icosphere */
-                            .getTriangles();
+                        std::vector<Vertex> buffer;
+                        buffer.reserve(3 * triangles.size());
 
-                    std::vector<Vertex> vertices;
-                    vertices.reserve(3 * triangles.size());
+                        for (const Triangle &triangle : triangles){
+                            const glm::vec3 normal = triangle.normal();
+                            buffer.emplace_back(triangle.p1, normal);
+                            buffer.emplace_back(triangle.p2, normal);
+                            buffer.emplace_back(triangle.p3, normal);
+                        }
 
-                    for (const Triangle &triangle : triangles){
-                        const glm::vec3 normal = triangle.normal();
-                        vertices.emplace_back(triangle.p1, normal);
-                        vertices.emplace_back(triangle.p2, normal);
-                        vertices.emplace_back(triangle.p3, normal);
-                    }
-
-                    const auto end = std::chrono::high_resolution_clock::now();
-                    generation_elapsed = std::chrono::duration<float, std::milli>(end - start).count();
+                        return buffer;
+                    });
+                    generation_elapsed = elapsed.count();
 
                     flat_shading.num_icosphere_vertices = static_cast<GLsizei>(vertices.size());
 
@@ -173,10 +181,11 @@ private:
                     glEnableVertexAttribArray(1);
                 },
                 [&](Shading::Phong &phong_shading){
-                    const auto start = std::chrono::high_resolution_clock::now();
-                    const Mesh<unsigned int> new_icosphere = Icosphere<unsigned int>::generate(new_subdivision_level);
-                    const auto end = std::chrono::high_resolution_clock::now();
-                    generation_elapsed = std::chrono::duration<float, std::milli>(end - start).count();
+                    // Create vertices with elapsed time measurement.
+                    const auto &&[elapsed, new_icosphere] = measure<std::ratio<1, 1>>([&]{
+                        return Icosphere<unsigned int>::generate(new_subdivision_level);
+                    });
+                    generation_elapsed = elapsed.count();
 
                     phong_shading.num_icosphere_positions = new_icosphere.positions.size();
                     phong_shading.num_icosphere_indices = 3 * static_cast<GLsizei>(new_icosphere.triangle_indices.size());
@@ -192,7 +201,7 @@ private:
                     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), nullptr);
                     glEnableVertexAttribArray(0);
                     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), nullptr);
-                    glEnableVertexAttribArray(1); // for sphere, all vertex position is also normal.
+                    glEnableVertexAttribArray(1); // for sphere, all vertex position is also normal too.
 
                     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
                     glBufferData(GL_ELEMENT_ARRAY_BUFFER,
@@ -328,20 +337,16 @@ private:
     }
 
 public:
-    Viewer() : OpenGL::Window { 800, 480, "Viewer" },
-               flat_program { "shaders/flat.vert", "shaders/flat.frag" },
-               phong_program { "shaders/phong.vert", "shaders/phong.frag" }
-    {
+    Viewer() : OpenGL::Window { 800, 480, "Viewer" } {
         camera.view.distance = 5.f;
         camera.view.addYaw(glm::radians(180.f));
 
         const auto model = glm::identity<glm::mat4>(); // You can use your own transform matrix here.
-        mvp_matrix.mutableValue() = MvpMatrixUniform {
-            .model = model,
-            .inv_model = glm::inverse(model),
-            .projection_view = camera.projection.getMatrix(getAspectRatio()) * camera.view.getMatrix(),
+        mvp_matrix = MvpMatrixUniform {
+            model,
+            glm::inverse(model),
+            camera.projection.getMatrix(getAspectRatio()) * camera.view.getMatrix(),
         };
-        mvp_matrix.makeDirty();
 
         lighting = LightingUniform { .view_pos = camera.view.getPosition(), .light_pos = getLightPosition() };
 
