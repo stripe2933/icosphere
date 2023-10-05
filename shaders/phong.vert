@@ -14,6 +14,6 @@ layout (std140) uniform MvpMatrix{
 
 void main(){
     fragPos = vec3(model * vec4(aPos, 1.0));
-    normal = normalize(mat3(transpose(inv_model)) * aNormal);
+    normal = mat3(transpose(inv_model)) * aNormal;
     gl_Position = projection_view * vec4(fragPos, 1.0);
 }
