@@ -378,8 +378,6 @@ public:
 
         // Front face of triangles are counter-clockwise.
         glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
-        glFrontFace(GL_CCW);
 
         initImGui();
     }
