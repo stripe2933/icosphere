@@ -18,20 +18,30 @@
  *
  * void cleanWithMessage(DirtyProperty<int> &prop){
  *     prop.clean([](int count){
- *         std::cout << "Message count is updated with value " << count << '\n';
+ *         std::cout << "message_count=" << count << '\n';
  *     });
  * }
  *
- * cleanWithMessage(message_count); // print "Message count is updated with value 0", is_dirty = false.
- * cleanWithMessage(message_count); // no message printed since is_dirty flag is now false.
- * message_count = message_count.value() + 1; // property value updated, is_dirty = true, data = 1.
- * cleanWithMessage(message_count); // print "Message count is updated with value 1", is_dirty = false.
- * message_count.makeDirty(); // value is not updated, but user sets dirty flag as true. is_dirty = true, data = 1.
- * cleanWithMessage(message_count); // print "Message count is updated with value 1", is_dirty = false.
+ * cleanWithMessage(message_count);
+ * // print "message_count=0", is_dirty = false.
+ *
+ * cleanWithMessage(message_count);
+ * // no message printed since is_dirty flag is now false.
+ *
+ * message_count = message_count.value() + 1;
+ * // property value updated, is_dirty = true, data = 1.
+ *
+ * cleanWithMessage(message_count);
+ * // print "message_count=1", is_dirty = false.
+ *
+ * message_count.makeDirty();
+ * // value is not updated, but user sets dirty flag as true. is_dirty = true, data = 1.
+ *
+ * cleanWithMessage(message_count);
+ * // print "message_count=1", is_dirty = false.
  * @endcode
  *
  * If the update should be processed when multiple properties are dirty, you can use \p DirtyPropertyHelper::clean() .
- *
  * @code
  * DirtyProperty<int> prop1 { 1 }, prop2 { 2 }; // prop1: is_dirty = true, prop2: is_dirty = true.
  * DirtyPropertyHelper::clean([](int value1, int value2){
