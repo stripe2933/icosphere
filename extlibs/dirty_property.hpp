@@ -7,8 +7,9 @@
 /**
  * The word "dirty" means it is modified, and all other things dependent on it should be updated. Dirty property holds
  * a data that can be modified, and a dirty flag that indicates whether the data is modified or not. When the data is
- * modified, \p is_dirty flag is set to \p true. User can process the data when it is modified by calling \p clean()
- * function, and the dirty flag gets \p false .
+ * modified, \p is_dirty flag is set to <tt>true</tt>. User can process the data when it is modified by calling \p clean()
+ * function, and the dirty flag gets <tt>false</tt>.
+ *
  * @tparam T Type of data to store.
  *
  * This is the basic usage of DirtyProperty.
