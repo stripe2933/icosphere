@@ -150,7 +150,7 @@ namespace DirtyPropertyHelper{
         requires std::is_invocable_v<Function, typename Props::value_type&...>
     static void clean(Function &&function, Props &...props){
         if ((props.isDirty() || ...)){
-            std::invoke(std::forward<Function>(function), props.mutableValue()...);
+            std::invoke(std::forward<Function>(function), props.value()...);
             (props.makeDirty(), ...);
         }
     }
