@@ -148,7 +148,7 @@ namespace DirtyPropertyHelper{
 
     template <typename Function, details::dirty_property ...Props>
         requires std::is_invocable_v<Function, typename Props::value_type&...>
-    static void clean(Function &&function, Props &...props){
+    void clean(Function &&function, Props &...props){
         if ((props.isDirty() || ...)){
             std::invoke(std::forward<Function>(function), props.value()...);
             (props.makeDirty(), ...);
