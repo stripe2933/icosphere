@@ -48,13 +48,12 @@
  */
 template <typename T>
 class DirtyProperty{
-private:
-    using value_type = T;
-
     bool is_dirty;
     T data;
 
 public:
+    using value_type = T;
+
     explicit constexpr DirtyProperty(bool is_dirty = true) requires std::is_default_constructible_v<T>
             : data{}, is_dirty { is_dirty }
     {
@@ -123,28 +122,26 @@ public:
             is_dirty = false;
         }
     }
-
-    friend class DirtyPropertyHelper;
 };
 
-namespace {
-    template <typename>
-    struct is_dirty_property : std::false_type { };
+namespace DirtyPropertyHelper{
+    namespace details {
+        template <typename>
+        struct is_dirty_property : std::false_type { };
 
-    template <typename U>
-    struct is_dirty_property<DirtyProperty<U>> : std::true_type { };
+        template <typename U>
+        struct is_dirty_property<DirtyProperty<U>> : std::true_type { };
 
-    template <typename U>
-    concept dirty_property = is_dirty_property<U>::value;
-}
+        template <typename U>
+        concept dirty_property = is_dirty_property<U>::value;
+    }
 
-struct DirtyPropertyHelper{
-    template <typename Function, dirty_property ...Props>
+    template <typename Function, details::dirty_property ...Props>
         requires std::is_invocable_v<Function, typename Props::value_type&...>
     static void clean(Function &&function, Props &...props){
-        if ((props.is_dirty || ...)){
-            std::invoke(std::forward<Function>(function), props.data...);
-            ((props.is_dirty = false), ...);
+        if ((props.isDirty() || ...)){
+            std::invoke(std::forward<Function>(function), props.mutableValue()...);
+            (props.makeDirty(), ...);
         }
     }
-};
+}
