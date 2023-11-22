@@ -5,11 +5,10 @@
 #pragma once
 
 #include <variant>
-#include <concepts>
 
 #include <imgui.h>
 
-template <typename T>
+template <typename>
 struct ImGuiLabel { };
 
 #define IMGUI_LABEL(type, label) \
@@ -28,6 +27,10 @@ namespace ImGui::VariantSelector{
 
         template<class... Ts>
         overload(Ts...) -> overload<Ts...>;
+
+        constexpr bool all_same_value(auto &&arg, auto &&...args){
+            return ((arg == args ) && ...);
+        }
 
         template <typename T>
         void single_radio(auto &variant, auto &&args){
@@ -55,21 +58,21 @@ namespace ImGui::VariantSelector{
 
     template <typename... Ts, typename... Fs, typename... Defaults>
     void radio(std::variant<Ts...> &variant, std::pair<Fs, Defaults> &&...args)
-        requires (sizeof...(Ts) == sizeof...(Fs)) && (sizeof...(Ts) == sizeof...(Defaults)) && // Arguments count must be same.
+        requires (details::all_same_value(sizeof...(Ts), sizeof...(Fs), sizeof...(Defaults)) && // Arguments count must be same.
                  (std::is_invocable_r_v<void, Fs, Ts&> && ...) && // select function can be invoked with variant's value.
-                 (std::is_convertible_v<std::invoke_result_t<Defaults>, Ts> &&...) // Defaults function should generate Ts-convertible type.
+                 (std::is_convertible_v<std::invoke_result_t<Defaults>, Ts> &&...)) // Defaults function should generate Ts-convertible type.
     {
         (details::single_radio<Ts>(variant, std::forward<decltype(args)>(args)), ...);
     }
 
     template <typename... Ts, typename... Fs, typename... Defaults>
     void combo(const char *label, std::variant<std::monostate, Ts...> &variant, const char *placeholder, std::pair<Fs, Defaults> &&...args)
-        requires (sizeof...(Ts) == sizeof...(Fs)) && (sizeof...(Ts) == sizeof...(Defaults)) && // Arguments count must be same.
+        requires (details::all_same_value(sizeof...(Ts), sizeof...(Fs), sizeof...(Defaults)) && // Arguments count must be same.
                  (std::is_invocable_r_v<void, Fs, Ts&> && ...) && // select function can be invoked with variant's value.
-                 (std::is_convertible_v<std::invoke_result_t<Defaults>, Ts> &&...) // Defaults function should generate Ts-convertible type.
+                 (std::is_convertible_v<std::invoke_result_t<Defaults>, Ts> &&...)) // Defaults function should generate Ts-convertible type.
     {
         const char *preview_value = std::visit(details::overload {
-            [](const Ts &x) { return ImGuiLabel<Ts>::value; }...,
+            [](const Ts &) { return ImGuiLabel<Ts>::value; }...,
             [=](std::monostate) { return placeholder; }
         }, variant);
 
