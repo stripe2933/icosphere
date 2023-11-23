@@ -4,6 +4,13 @@
 
 #pragma once
 
+#include <utility>
+#include <type_traits>
+#include <concepts>
+#include <functional>
+
+#define DIRTY_PROPERTY_FWD(x) std::forward<decltype(x)>(x)
+
 /**
  * The word "dirty" means it is modified, and all other things dependent on it should be updated. Dirty property holds
  * a data that can be modified, and a dirty flag that indicates whether the data is modified or not. When the data is
@@ -73,13 +80,13 @@ public:
 
     template <typename U>
     explicit constexpr DirtyProperty(U &&value, bool is_dirty = true) requires std::is_convertible_v<std::remove_cvref_t<U>, T>
-            : data { std::forward<U>(value) }, is_dirty { is_dirty }
+            : data { DIRTY_PROPERTY_FWD(value) }, is_dirty { is_dirty }
     {
 
     }
 
     constexpr DirtyProperty &operator=(auto &&new_value){
-        data = std::forward<decltype(new_value)>(new_value);
+        data = DIRTY_PROPERTY_FWD(new_value);
         is_dirty = true;
         return *this;
     }
@@ -126,10 +133,10 @@ public:
      * Execute the given function when the property is dirty, and set dirty flag to \p false.
      * @param function Function to execute when the property is dirty. If \p is_dirty is \p false, it does not executed.
      */
-    template <typename UnaryFunction> requires std::invocable<UnaryFunction, T&>
+    template <typename UnaryFunction> requires std::invocable<UnaryFunction, const T&>
     constexpr void clean(UnaryFunction &&function){
         if (is_dirty){
-            std::invoke(std::forward<UnaryFunction>(function), data);
+            std::invoke(DIRTY_PROPERTY_FWD(function), data);
             is_dirty = false;
         }
     }
@@ -151,7 +158,7 @@ namespace DirtyPropertyHelper{
         requires std::is_invocable_v<Function, typename Props::value_type&...>
     void clean(Function &&function, Props &...props){
         if ((props.isDirty() || ...)){
-            std::invoke(std::forward<Function>(function), props.value()...);
+            std::invoke(DIRTY_PROPERTY_FWD(function), props.value()...);
             (props.makeDirty(), ...);
         }
     }
