@@ -8,6 +8,8 @@
 
 #include <imgui.h>
 
+#define IMGUI_VARIANT_SELECTOR_FWD(x) std::forward<decltype(x)>(x)
+
 template <typename>
 struct ImGuiLabel { };
 
@@ -34,15 +36,15 @@ namespace ImGui::VariantSelector{
 
         template <typename T>
         void single_radio(auto &variant, auto &&args){
-            auto &&[select_function, default_function] = args;
+            auto [select_function, default_function] = args;
 
             if (bool selected = std::holds_alternative<T>(variant);
                 ImGui::RadioButton(ImGuiLabel<T>::value, selected) && !selected)
             {
-                variant = default_function();
+                variant = std::invoke(IMGUI_VARIANT_SELECTOR_FWD(default_function));
             }
             if (T *value = std::get_if<T>(&variant)){
-                select_function(*value);
+                std::invoke(IMGUI_VARIANT_SELECTOR_FWD(select_function), *value);
             }
         }
 
@@ -51,7 +53,7 @@ namespace ImGui::VariantSelector{
             if (bool selected = std::holds_alternative<T>(variant);
                 ImGui::Selectable(ImGuiLabel<T>::value, selected) && !selected)
             {
-                variant = default_function();
+                variant = std::invoke(IMGUI_VARIANT_SELECTOR_FWD(default_function));
             }
         }
     }
@@ -59,17 +61,17 @@ namespace ImGui::VariantSelector{
     template <typename... Ts, typename... Fs, typename... Defaults>
     void radio(std::variant<Ts...> &variant, std::pair<Fs, Defaults> &&...args)
         requires (details::all_same_value(sizeof...(Ts), sizeof...(Fs), sizeof...(Defaults)) && // Arguments count must be same.
-                 (std::is_invocable_r_v<void, Fs, Ts&> && ...) && // select function can be invoked with variant's value.
-                 (std::is_convertible_v<std::invoke_result_t<Defaults>, Ts> &&...)) // Defaults function should generate Ts-convertible type.
+                 std::conjunction_v<std::is_invocable_r<void, Fs, Ts&>...> && // select function can be invoked with variant's value.
+                 std::conjunction_v<std::is_convertible<std::invoke_result_t<Defaults>, Ts>...>) // Defaults function should generate Ts-convertible type.
     {
-        (details::single_radio<Ts>(variant, std::forward<decltype(args)>(args)), ...);
+        (details::single_radio<Ts>(variant, IMGUI_VARIANT_SELECTOR_FWD(args)), ...);
     }
 
     template <typename... Ts, typename... Fs, typename... Defaults>
     void combo(const char *label, std::variant<std::monostate, Ts...> &variant, const char *placeholder, std::pair<Fs, Defaults> &&...args)
         requires (details::all_same_value(sizeof...(Ts), sizeof...(Fs), sizeof...(Defaults)) && // Arguments count must be same.
-                 (std::is_invocable_r_v<void, Fs, Ts&> && ...) && // select function can be invoked with variant's value.
-                 (std::is_convertible_v<std::invoke_result_t<Defaults>, Ts> &&...)) // Defaults function should generate Ts-convertible type.
+                 std::conjunction_v<std::is_invocable_r<void, Fs, Ts&>...> && // select function can be invoked with variant's value.
+                 std::conjunction_v<std::is_convertible<std::invoke_result_t<Defaults>, Ts>...>) // Defaults function should generate Ts-convertible type.
     {
         const char *preview_value = std::visit(details::overload {
             [](const Ts &) { return ImGuiLabel<Ts>::value; }...,
@@ -77,7 +79,7 @@ namespace ImGui::VariantSelector{
         }, variant);
 
         if (ImGui::BeginCombo(label, preview_value)){
-            (details::single_combo<Ts>(variant, std::forward<Defaults>(args.second)), ...);
+            (details::single_combo<Ts>(variant, IMGUI_VARIANT_SELECTOR_FWD(args.second)), ...);
             ImGui::EndCombo();
         }
         std::visit(details::overload {
