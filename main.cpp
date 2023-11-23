@@ -9,6 +9,7 @@
 #include <imgui_variant_selector.hpp>
 #include <dirty_property.hpp>
 #include <visitor_helper.hpp>
+#include <measure_execution.hpp>
 
 #include "icosphere.hpp"
 #include "vertex.hpp"
@@ -24,10 +25,12 @@ namespace Shading{
     };
 
     using Type = std::variant<Flat, Phong>;
-}
 
-IMGUI_LABEL(Shading::Flat, "Flat shading");
-IMGUI_LABEL(Shading::Phong, "Phong shading");
+    enum class Mode : std::uint8_t {
+        Flat,
+        Phong,
+    };
+}
 
 struct MvpMatrixUniform{
     glm::mat4 model;
@@ -40,21 +43,12 @@ struct LightingUniform{
     alignas(16) glm::vec3 light_pos; // std140: base alignment must be 16 for vec3.
 };
 
-template <typename Period, typename Func, typename... FuncArgs>
-auto measure(Func &&func, FuncArgs &&...args) -> std::pair<std::chrono::duration<float, Period>, std::invoke_result_t<Func, FuncArgs...>>{
-    const auto start = std::chrono::high_resolution_clock::now();
-    auto &&result = std::invoke(std::forward<Func>(func), std::forward<FuncArgs>(args)...);
-    const auto end = std::chrono::high_resolution_clock::now();
-
-    return std::make_pair(std::chrono::duration<float, Period>(end - start), std::forward<decltype(result)>(result));
-}
-
 class Viewer final : public OpenGL::Window {
-private:
     DirtyProperty<int> subdivision_level { 0 };
-    DirtyProperty<Shading::Type> shading { Shading::Phong{} };
+    DirtyProperty<Shading::Mode> shading_mode { Shading::Mode::Phong };
+    Shading::Type shading { Shading::Phong{} };
     DirtyProperty<bool> fix_light_position { false }; // true -> light is fixed at (5, 0, 0), false -> light is at camera position.
-    float generation_elapsed = 0.f;
+    std::chrono::duration<float, std::milli> generation_elapsed;
 
     std::optional<glm::vec2> previous_mouse_position;
     OpenGL::PerspectiveCamera camera;
@@ -133,12 +127,14 @@ private:
 
     void update(float time_delta) override {
         // If either subdivision_level or shading is changed, the vertices should be recalculated.
-        DirtyPropertyHelper::clean([&](std::uint8_t new_subdivision_level, Shading::Type &new_shading){
-            std::visit(overload {
-                [&](Shading::Flat &flat_shading){
+        DirtyPropertyHelper::clean([&](std::uint8_t subdivision_level, Shading::Mode shading_mode){
+            switch (shading_mode) {
+                using Shading::Mode;
+
+                case Mode::Flat: {
                     // Create vertices with elapsed time measurement.
-                    const auto &&[elapsed, vertices] = measure<std::milli>([&]{
-                        const auto triangles = Icosphere<unsigned int>::generate(new_subdivision_level) /* new icosphere */
+                    const auto [vertices, elapsed] = measure_execution_with_result([&]{
+                        const auto triangles = Icosphere<unsigned int>::generate(subdivision_level) /* new icosphere */
                                 .getTriangles();
 
                         std::vector<Vertex> buffer;
@@ -153,9 +149,11 @@ private:
 
                         return buffer;
                     });
-                    generation_elapsed = elapsed.count();
+                    generation_elapsed = elapsed;
 
-                    flat_shading.num_icosphere_vertices = static_cast<GLsizei>(vertices.size());
+                    shading = Shading::Flat {
+                        .num_icosphere_vertices = static_cast<GLsizei>(vertices.size())
+                    };
 
                     glBindVertexArray(vao);
 
@@ -170,25 +168,29 @@ private:
                                           GL_FLOAT,
                                           GL_FALSE,
                                           sizeof(Vertex),
-                                          reinterpret_cast<GLint*>(offsetof(Vertex, position)));
+                                          reinterpret_cast<const GLint*>(offsetof(Vertex, position)));
                     glEnableVertexAttribArray(0);
                     glVertexAttribPointer(1,
                                           3,
                                           GL_FLOAT,
                                           GL_FALSE,
                                           sizeof(Vertex),
-                                          reinterpret_cast<GLint*>(offsetof(Vertex, normal)));
+                                          reinterpret_cast<const GLint*>(offsetof(Vertex, normal)));
                     glEnableVertexAttribArray(1);
-                },
-                [&](Shading::Phong &phong_shading){
-                    // Create vertices with elapsed time measurement.
-                    const auto &&[elapsed, new_icosphere] = measure<std::ratio<1, 1>>([&]{
-                        return Icosphere<unsigned int>::generate(new_subdivision_level);
-                    });
-                    generation_elapsed = elapsed.count();
 
-                    phong_shading.num_icosphere_positions = new_icosphere.positions.size();
-                    phong_shading.num_icosphere_indices = 3 * static_cast<GLsizei>(new_icosphere.triangle_indices.size());
+                    break;
+                }
+                case Mode::Phong: {
+                    // Create vertices with elapsed time measurement.
+                    const auto &&[new_icosphere, elapsed] = measure_execution_with_result([&]{
+                        return Icosphere<unsigned int>::generate(subdivision_level);
+                    });
+                    generation_elapsed = elapsed;
+
+                    shading = Shading::Phong {
+                        .num_icosphere_positions = new_icosphere.positions.size(),
+                        .num_icosphere_indices = 3 * static_cast<GLsizei>(new_icosphere.triangle_indices.size())
+                    };
 
                     glBindVertexArray(vao);
 
@@ -208,8 +210,8 @@ private:
                                  static_cast<GLsizei>(new_icosphere.triangle_indices.size() * sizeof(Mesh<unsigned int>::triangle_index_t)),
                                  new_icosphere.triangle_indices.data(), GL_STATIC_DRAW);
                 }
-            }, new_shading);
-        }, subdivision_level, shading);
+            }
+        }, subdivision_level, shading_mode);
 
         // MVP Matrix UBO should be updated when it changed.
         mvp_matrix.clean([&](const MvpMatrixUniform &value){
@@ -248,7 +250,7 @@ private:
                 glBindVertexArray(vao);
                 glDrawElements(GL_TRIANGLES, phong_shading.num_icosphere_indices, GL_UNSIGNED_INT, nullptr);
             }
-        }, shading.value());
+        }, shading);
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
@@ -301,35 +303,23 @@ private:
             subdivision_level = std::clamp(subdivision_level_input, 0, 8);
         }
 
-        ImGui::VariantSelector::radio(
-            shading.mutableValue(),
-            std::pair {
-                [&](const Shading::Flat &flat_shading){
-                    ImGui::Text("# of vertices: %d", flat_shading.num_icosphere_vertices);
-                },
-                [&]{
-                    // This lambda executed when user select shading mode as flat shading, and VariantSelector assign
-                    // the Shading::Flat{} to mutable reference of shading property's stored value. Therefore, it should
-                    // be explicitly make the property dirty to indicate the property value is modified.
-                    shading.makeDirty();
-                    return Shading::Flat{};
-                }
+        if (ImGui::RadioButton("Flat shading", shading_mode.value() == Shading::Mode::Flat)){
+            shading_mode = Shading::Mode::Flat;
+        }
+        if (ImGui::RadioButton("Phong shading", shading_mode.value() == Shading::Mode::Phong)) {
+            shading_mode = Shading::Mode::Phong;
+        }
+
+        std::visit(overload {
+            [](const Shading::Flat &shading) {
+                ImGui::Text("# of vertices: %d", shading.num_icosphere_vertices);
             },
-            std::pair {
-                [&](const Shading::Phong &phong_shading){
-                    ImGui::Text("# of positions: %zu", phong_shading.num_icosphere_positions);
-                    ImGui::Text("# of indices: %d", phong_shading.num_icosphere_indices);
-                },
-                [&]{
-                    // This lambda executed when user select shading mode as phong shading, and VariantSelector assign
-                    // the Shading::Phong{} to mutable reference of shading property's stored value. Therefore, it should
-                    // be explicitly make the property dirty to indicate the property value is modified.
-                    shading.makeDirty();
-                    return Shading::Phong{};
-                }
-            }
-        );
-        ImGui::Text("Generation time: %.3f ms", generation_elapsed);
+            [](const Shading::Phong &shading) {
+                ImGui::Text("# of positions: %zu", shading.num_icosphere_positions);
+                ImGui::Text("# of indices: %d", shading.num_icosphere_indices);
+            },
+        }, shading);
+        ImGui::Text("Generation time: %.3f ms", generation_elapsed.count());
 
         ImGui::End();
 
@@ -341,7 +331,7 @@ public:
         camera.view.distance = 5.f;
         camera.view.addYaw(glm::radians(180.f));
 
-        const auto model = glm::identity<glm::mat4>(); // You can use your own transform matrix here.
+        constexpr auto model = glm::identity<glm::mat4>(); // You can use your own transform matrix here.
         mvp_matrix = MvpMatrixUniform {
             model,
             glm::inverse(model),
